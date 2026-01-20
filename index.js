@@ -5,17 +5,61 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const LOGIN = "vulkan21";
 
+app.get("/login", (req, res) => res.type("text/plain").send(LOGIN));
 app.get("/", (req, res) => res.type("text/plain").send("OK"));
 
-// принимаем /login и /zombie/login на всякий случай
-app.get(["/login", "/zombie/login"], (req, res) => {
-  res.type("text/plain").send(LOGIN);
-});
+function pickNum(req) {
+  // /zombie?num=1234
+  if (req.query?.num) return String(req.query.num);
+  // /zombie?1234
+  const keys = Object.keys(req.query || {});
+  if (keys.length) return String(keys[0]);
+  return null;
+}
+
+async function clickRightButton(page) {
+  // 1) самые частые id
+  const idSelectors = ["#button", "#btn", "#go", "#run", "#calc", "#start"];
+  for (const sel of idSelectors) {
+    const el = await page.$(sel);
+    if (el) {
+      await el.click();
+      return `clicked ${sel}`;
+    }
+  }
+
+  // 2) кнопка/инпут по тексту (рус/англ)
+  const textVariants = ["OK", "Go", "Run", "Calc", "Start", "Посчитать", "Вычислить", "Рассчитать"];
+  for (const t of textVariants) {
+    // playwright text selectors
+    const el = await page.$(`button:has-text("${t}")`);
+    if (el) {
+      await el.click();
+      return `clicked button text=${t}`;
+    }
+    const el2 = await page.$(`input[type=button][value="${t}"], input[type=submit][value="${t}"]`);
+    if (el2) {
+      await el2.click();
+      return `clicked input value=${t}`;
+    }
+  }
+
+  // 3) fallback: первый button / input
+  const btn =
+    (await page.$("button")) ||
+    (await page.$("input[type=button]")) ||
+    (await page.$("input[type=submit]")) ||
+    (await page.$("[onclick]"));
+
+  if (!btn) throw new Error("No clickable control found");
+  await btn.click();
+  return "clicked fallback first-control";
+}
 
 async function runZombie(num, res) {
   let browser;
   try {
-    if (!num || !/^\d+$/.test(String(num))) {
+    if (!num || !/^\d+$/.test(num)) {
       return res.status(400).type("text/plain").send("Bad number");
     }
 
@@ -27,26 +71,21 @@ async function runZombie(num, res) {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
 
     const oldTitle = await page.title();
+    console.log("[zombie] oldTitle =", oldTitle);
 
-    const btn =
-      (await page.$("button")) ||
-      (await page.$("input[type=button]")) ||
-      (await page.$("input[type=submit]")) ||
-      (await page.$("[onclick]"));
+    const how = await clickRightButton(page);
+    console.log("[zombie] click =", how);
 
-    if (!btn) throw new Error("Button not found");
-    await btn.click();
-
+    // ждём смены title
     await page.waitForFunction(
       (t) => document.title && document.title !== t,
       oldTitle,
-      { timeout: 5000 }
+      { timeout: 7000 }
     );
 
     const title = await page.title();
     console.log("[zombie] title =", title);
 
-    // Возвращаем title КАК ЕСТЬ
     res.type("text/plain").send(title);
   } catch (e) {
     console.error("[zombie] ERROR:", e);
@@ -56,20 +95,15 @@ async function runZombie(num, res) {
   }
 }
 
-function extractNum(req) {
-  // /zombie?1234  или /zombie?num=1234
-  const q = req.query.num ?? Object.keys(req.query)[0];
-  if (q && /^\d+$/.test(String(q))) return String(q);
-
-  // /zombie/1234 или даже /zombie/zombie/1234
-  const m = req.path.match(/(\d+)/);
-  return m ? m[1] : null;
-}
-
-// принимаем /zombie, /zombie/, /zombie/1234 и даже /zombie/zombie...
-app.get(["/zombie", "/zombie/", "/zombie/:num", "/zombie/zombie", "/zombie/zombie/:num"], async (req, res) => {
-  const num = req.params.num ?? extractNum(req);
+// ✅ важное: поддержим и /zombie и /zombie/
+app.get(["/zombie", "/zombie/"], async (req, res) => {
+  const num = pickNum(req);
   await runZombie(num, res);
+});
+
+// на всякий /zombie/1234
+app.get("/zombie/:num", async (req, res) => {
+  await runZombie(String(req.params.num), res);
 });
 
 app.listen(PORT, () => console.log("Server listening on", PORT));
