@@ -6,27 +6,15 @@ const PORT = process.env.PORT || 3000;
 
 const LOGIN = "vulkan21";
 
-// Просто чтобы корень отвечал (не обязательно, но удобно)
-app.get("/", (req, res) => {
-  res.type("text/plain").send("OK");
-});
+app.get("/", (req, res) => res.type("text/plain").send("OK"));
 
 app.get("/login", (req, res) => {
   res.type("text/plain").send(LOGIN);
 });
 
-// /zombie/1234 -> редирект на /zombie?1234
-app.get("/zombie/:num", (req, res) => {
-  res.redirect(302, `/zombie?${req.params.num}`);
-});
-
-// /zombie?1234  и /zombie?num=1234
-app.get("/zombie", async (req, res) => {
+async function runZombie(num, res) {
   let browser;
   try {
-    // Берем число: либо ?num=1234, либо ?1234
-    const num = req.query.num ?? Object.keys(req.query)[0];
-
     if (!num || !/^\d+$/.test(String(num))) {
       return res.status(400).type("text/plain").send("Bad number");
     }
@@ -46,7 +34,6 @@ app.get("/zombie", async (req, res) => {
     const oldTitle = await page.title();
     console.log("[zombie] oldTitle =", oldTitle);
 
-    // Ищем, что кликнуть (универсально)
     const btn =
       (await page.$("button")) ||
       (await page.$("input[type=button]")) ||
@@ -57,7 +44,6 @@ app.get("/zombie", async (req, res) => {
 
     await btn.click();
 
-    // Ждём, пока title реально изменится
     await page.waitForFunction(
       (t) => document.title && document.title !== t,
       oldTitle,
@@ -67,7 +53,7 @@ app.get("/zombie", async (req, res) => {
     const title = await page.title();
     console.log("[zombie] title =", title);
 
-    // ✅ ВАЖНО: возвращаем title КАК ЕСТЬ (не режем до 603)
+    // ВАЖНО: отдаём title как есть
     res.type("text/plain").send(title);
   } catch (e) {
     console.error("[zombie] ERROR:", e);
@@ -75,6 +61,17 @@ app.get("/zombie", async (req, res) => {
   } finally {
     if (browser) await browser.close();
   }
+}
+
+// ✅ /zombie/1234 — без редиректа
+app.get("/zombie/:num", async (req, res) => {
+  await runZombie(req.params.num, res);
+});
+
+// ✅ /zombie?1234 или /zombie?num=1234
+app.get("/zombie", async (req, res) => {
+  const num = req.query.num ?? Object.keys(req.query)[0];
+  await runZombie(num, res);
 });
 
 app.listen(PORT, () => {
