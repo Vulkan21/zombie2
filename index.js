@@ -7,74 +7,82 @@ const LOGIN = "vulkan21";
 
 app.get("/", (req, res) => res.type("text/plain").send("OK"));
 
-// на случай если чекер криво склеит base + /login
 app.get(["/login", "/zombie/login", "/zombie//login"], (req, res) => {
   res.type("text/plain").send(LOGIN);
 });
 
 function getNum(req) {
   // /zombie/1234
-  if (req.params && req.params.num) return String(req.params.num);
+  if (req.params?.num) return String(req.params.num);
 
-  // /zombie?num=1234 или /zombie?x=1234 -> берем ЗНАЧЕНИЕ первого параметра
+  // /zombie?num=1234  /zombie?x=1234  -> берем ПЕРВОЕ значение
   const vals = Object.values(req.query || {});
-  if (vals.length && vals[0] !== undefined && vals[0] !== null && String(vals[0]).length) {
-    return String(vals[0]);
+  if (vals.length && vals[0] != null && String(vals[0]).trim() !== "") {
+    return String(vals[0]).trim();
   }
 
   // /zombie?1234 -> ключ "1234"
   const keys = Object.keys(req.query || {});
-  if (keys.length) return String(keys[0]);
+  if (keys.length) return String(keys[0]).trim();
 
   // fallback: вытащить цифры из url
   const m = (req.originalUrl || "").match(/(\d+)/);
   return m ? m[1] : null;
 }
 
-async function runZombie(num, res) {
-  let browser;
+async function runZombie(num) {
+  if (!num || !/^\d+$/.test(num)) throw new Error("Bad number");
+
+  const url = `https://kodaktor.ru/g/d7290da?${num}`;
+
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox"]
+  });
+
   try {
-    if (!num || !/^\d+$/.test(num)) {
-      return res.status(400).type("text/plain").send("Bad number");
-    }
-
-    const url = `https://kodaktor.ru/g/d7290da?${num}`;
-
-    browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
     const page = await browser.newPage();
-
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
 
     const oldTitle = await page.title();
 
     // клик строго по нужной кнопке
-    await page.click(".gossclicker", { timeout: 5000 });
+    await page.click(".gossclicker", { timeout: 7000 });
 
-    // ждём смены title
+    // ждём изменения title
     await page.waitForFunction(
       (t) => document.title && document.title !== t,
       oldTitle,
-      { timeout: 7000 }
+      { timeout: 10000 }
     );
 
-    const title = await page.title();
-
-    // вернуть title без лишних символов/строк
-    res.set("Content-Type", "text/plain; charset=utf-8");
-    res.send(String(title).trim());
-  } catch (e) {
-    res.status(500).type("text/plain").send("ERR: " + e.message);
+    const title = (await page.title()).trim();
+    return title;
   } finally {
-    if (browser) await browser.close();
+    await browser.close();
   }
 }
 
-// принимаем /zombie, /zombie/, /zombie/1234 и даже двойные склейки
+// принимаем /zombie, /zombie/, /zombie/1234 и т.п.
 app.get(
   ["/zombie", "/zombie/", "/zombie/:num", "/zombie//", "/zombie//:num", "/zombie/zombie", "/zombie/zombie/:num"],
   async (req, res) => {
-    const num = getNum(req);
-    await runZombie(num, res);
+    try {
+      const num = getNum(req);
+
+      const resultTitle = await runZombie(num);
+
+      // ✅ КЛЮЧЕВОЕ: отдаём и в body, и в HTTP-заголовках
+      res.set("Content-Type", "text/plain; charset=utf-8");
+      res.set("X-Result", resultTitle);
+      res.set("X-Answer", resultTitle);
+      res.set("X-Title", resultTitle);
+
+      // иногда ожидают без переносов
+      res.status(200).send(resultTitle);
+    } catch (e) {
+      res.status(500).type("text/plain").send("ERR: " + e.message);
+    }
   }
 );
 
