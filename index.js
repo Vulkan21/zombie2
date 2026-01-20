@@ -15,7 +15,7 @@ async function initBrowser() {
 
 // Маршрут /login
 app.get("/login", (req, res) => {
-  res.send("atlz");
+  res.send("vulkan21");
 });
 
 // Маршрут /zombie
@@ -68,3 +68,4 @@ process.on("SIGINT", async () => {
   }
   process.exit(0);
 });
+
