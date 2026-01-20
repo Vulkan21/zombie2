@@ -1,71 +1,50 @@
 const express = require("express");
-const puppeteer = require("puppeteer");
+const { chromium } = require("playwright");
+
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+const LOGIN = "vulkan21";
 
-let browser;
+app.get("/login", (req, res) => res.type("text/plain").send(LOGIN));
 
-// Инициализация браузера при запуске
-async function initBrowser() {
-  browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
-}
+app.get("/zombie/:num", (req, res) => res.redirect(302, `/zombie?${req.params.num}`));
 
-// Маршрут /login
-app.get("/login", (req, res) => {
-  res.send("vulkan21");
-});
-
-// Маршрут /zombie
-app.get('/zombie/:num', async (req, res) => {
+app.get("/zombie", async (req, res) => {
+  let browser;
   try {
-    const num = req.params.num;
-    
-    if (!num) {
-      return res.status(400).type('text/plain').send('Missing parameter');
+    const num = req.query.num ?? Object.keys(req.query)[0];
+    if (!num || !/^\d+$/.test(String(num))) {
+      return res.status(400).type("text/plain").send("Bad number");
     }
 
+    const url = `https://kodaktor.ru/g/d7290da?${num}`;
+
+    browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
     const page = await browser.newPage();
-    const targetUrl = `https://kodaktor.ru/g/d7290da?${num}`;
-    
-    await page.goto(targetUrl, { waitUntil: 'networkidle2' });
-    await page.waitForSelector('button', { timeout: 5000 });
-    await page.click('button');
-    await new Promise(r => setTimeout(r, 1000));
+    await page.goto(url, { waitUntil: "domcontentloaded" });
 
-    const result = await page.evaluate(() => {
-      return document.title;
-    });
+    const oldTitle = await page.title();
 
-    await page.close();
-    res.type('text/plain').send(result);
+    const btn =
+      (await page.$("button")) ||
+      (await page.$("input[type=button]")) ||
+      (await page.$("input[type=submit]"));
 
-  } catch (error) {
-    console.error('Error:', error.message);
-    res.status(500).type('text/plain').send('Error: ' + error.message);
+    if (!btn) throw new Error("Button not found");
+    await btn.click();
+
+    await page.waitForFunction(
+      (t) => document.title && document.title !== t,
+      oldTitle,
+      { timeout: 5000 }
+    );
+
+    res.type("text/plain").send(await page.title());
+  } catch (e) {
+    res.status(500).type("text/plain").send("ERR: " + e.message);
+  } finally {
+    if (browser) await browser.close();
   }
 });
 
-
-// Запуск сервера
-initBrowser()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Server running on http://localhost:${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("Failed to initialize browser:", err);
-    process.exit(1);
-  });
-
-// Корректное завершение
-process.on("SIGINT", async () => {
-  if (browser) {
-    await browser.close();
-  }
-  process.exit(0);
-});
-
+app.listen(PORT, () => console.log("Listening on", PORT));
